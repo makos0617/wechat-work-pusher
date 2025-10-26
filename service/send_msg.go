@@ -2,15 +2,14 @@ package service
 
 import (
 	"fmt"
-	"github.com/mizuki1412/go-core-kit/class/exception"
-	"github.com/mizuki1412/go-core-kit/library/httpkit"
-	"github.com/mizuki1412/go-core-kit/service/configkit"
-	"github.com/spf13/cast"
-	"github.com/tidwall/gjson"
 	"net/http"
 	"sync"
 	"wechat-work-pusher/constant"
+	"wechat-work-pusher/pkg/config"
+	"wechat-work-pusher/pkg/httpclient"
 	"wechat-work-pusher/service/model"
+
+	"github.com/tidwall/gjson"
 )
 
 type agent struct {
@@ -20,59 +19,77 @@ type agent struct {
 
 var agentParams agent
 
-func SendMsg(to, content string) {
+func SendMsg(to, content string) error {
 	agentParams.once.Do(func() {
-		agentParams.val = configkit.GetStringD(constant.ConfigKeyWorkAgentId)
+		agentParams.val = config.GetString(constant.ConfigKeyWorkAgentId)
 	})
 	msg := &model.TextMessage{}
-	msg.AgentId.Set(agentParams.val)
-	msg.MsgType.Set(constant.MessageText)
-	msg.Text.Content.Set(content)
+	msg.AgentId = agentParams.val
+	msg.MsgType = constant.MessageText
+	msg.Text.Content = content
 	if to != "" {
-		msg.ToUser.Set(to)
+		msg.ToUser = to
 	} else {
-		msg.ToUser.Set(configkit.GetStringD(constant.ConfigKeyDefaultReceiver))
+		msg.ToUser = config.GetString(constant.ConfigKeyDefaultReceiver)
 	}
-	resp, code := httpkit.Request(httpkit.Req{
+	// 获取 token，增加错误返回
+	token, err := GetTokenFromWechat()
+	if err != nil {
+		return fmt.Errorf("get token failed: %w", err)
+	}
+	resp := httpclient.DoRequest(httpclient.Request{
 		Method:      http.MethodPost,
-		Url:         fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=%s", GetTokenFromWechat()),
-		ContentType: httpkit.ContentTypeJSON,
-		JsonData:    msg,
+		URL:         fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=%s", token),
+		ContentType: "application/json",
+		JSONData:    msg,
 	})
-	if code != http.StatusOK {
-		panic(exception.New(fmt.Sprintf("send text to wechat req err,code:%s", cast.ToString(code))))
+	if resp.Error != nil {
+		return fmt.Errorf("send text to wechat req err: %w", resp.Error)
 	}
-	if err := gjson.Get(resp, "errcode").Int(); err != 0 {
-		panic(exception.New(fmt.Sprintf("send text to wechat resp error,code:%s", cast.ToString(err))))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("send text to wechat req err, code:%d", resp.StatusCode)
 	}
+	if ec := gjson.Get(resp.Body, "errcode").Int(); ec != 0 {
+		return fmt.Errorf("send text to wechat resp error, code:%d", ec)
+	}
+	return nil
 }
 
-func SendCardMsg(to, title, des, url string) {
+func SendCardMsg(to, title, des, url string) error {
 	agentParams.once.Do(func() {
-		agentParams.val = configkit.GetStringD(constant.ConfigKeyWorkAgentId)
+		agentParams.val = config.GetString(constant.ConfigKeyWorkAgentId)
 	})
 	msg := &model.TextCardMessage{}
-	msg.AgentId.Set(agentParams.val)
-	msg.MsgType.Set(constant.MessageCard)
-	msg.TextCard.Title.Set(title)
-	msg.TextCard.Description.Set(des)
-	msg.TextCard.Url.Set(url)
-	msg.TextCard.Detail.Set("详情")
+	msg.AgentId = agentParams.val
+	msg.MsgType = constant.MessageCard
+	msg.TextCard.Title = title
+	msg.TextCard.Description = des
+	msg.TextCard.Url = url
+	msg.TextCard.Detail = "详情"
 	if to != "" {
-		msg.ToUser.Set(to)
+		msg.ToUser = to
 	} else {
-		msg.ToUser.Set(configkit.GetStringD(constant.ConfigKeyDefaultReceiver))
+		msg.ToUser = config.GetString(constant.ConfigKeyDefaultReceiver)
 	}
-	resp, code := httpkit.Request(httpkit.Req{
+	// 获取 token，增加错误返回
+	token, err := GetTokenFromWechat()
+	if err != nil {
+		return fmt.Errorf("get token failed: %w", err)
+	}
+	resp := httpclient.DoRequest(httpclient.Request{
 		Method:      http.MethodPost,
-		Url:         fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=%s", GetTokenFromWechat()),
-		ContentType: httpkit.ContentTypeJSON,
-		JsonData:    msg,
+		URL:         fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=%s", token),
+		ContentType: "application/json",
+		JSONData:    msg,
 	})
-	if code != http.StatusOK {
-		panic(exception.New(fmt.Sprintf("send textcard to wechat req err,code:%s", cast.ToString(code))))
+	if resp.Error != nil {
+		return fmt.Errorf("send textcard to wechat req err: %w", resp.Error)
 	}
-	if err := gjson.Get(resp, "errcode").Int(); err != 0 {
-		panic(exception.New(fmt.Sprintf("send textcard to wechat resp error,code:%s", cast.ToString(err))))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("send textcard to wechat req err, code:%d", resp.StatusCode)
 	}
+	if ec := gjson.Get(resp.Body, "errcode").Int(); ec != 0 {
+		return fmt.Errorf("send textcard to wechat resp error, code:%d", ec)
+	}
+	return nil
 }

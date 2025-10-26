@@ -1,42 +1,43 @@
 package controller
 
 import (
-	"github.com/mizuki1412/go-core-kit/service/restkit/context"
-	"github.com/mizuki1412/go-core-kit/service/restkit/router"
 	"wechat-work-pusher/middleware"
+	"wechat-work-pusher/pkg/httpserver"
 	"wechat-work-pusher/service"
 )
 
-func Init(router *router.Router) {
+func Init(router *httpserver.Router) {
 	r := router.Use(middleware.AuthToken())
-	{
-		r.Post("/msg", msg)
-		r.Post("/card", card)
+	r.Post("/msg", msg)
+	r.Post("/card", card)
+}
+
+func msg(ctx *httpserver.Context) {
+	to := ctx.Request.FormValue("to")
+	content := ctx.Request.FormValue("content")
+	
+	if err := service.SendMsg(to, content); err != nil {
+		ctx.Json(httpserver.RestRet{
+			Result:  httpserver.ResultErr,
+			Message: httpserver.String{String: err.Error(), Valid: true},
+		})
+		return
 	}
-}
-
-type msgParams struct {
-	To      string
-	Content string `validate:"required"`
-}
-
-func msg(ctx *context.Context) {
-	params := msgParams{}
-	ctx.BindForm(&params)
-	service.SendMsg(params.To, params.Content)
 	ctx.JsonSuccess("ok")
 }
 
-type cardParams struct {
-	To          string
-	Title       string `validate:"required"`
-	Description string `validate:"required"`
-	Url         string `validate:"required"`
-}
-
-func card(ctx *context.Context) {
-	params := cardParams{}
-	ctx.BindForm(&params)
-	service.SendCardMsg(params.To, params.Title, params.Description, params.Url)
+func card(ctx *httpserver.Context) {
+	to := ctx.Request.FormValue("to")
+	title := ctx.Request.FormValue("title")
+	description := ctx.Request.FormValue("description")
+	url := ctx.Request.FormValue("url")
+	
+	if err := service.SendCardMsg(to, title, description, url); err != nil {
+		ctx.Json(httpserver.RestRet{
+			Result:  httpserver.ResultErr,
+			Message: httpserver.String{String: err.Error(), Valid: true},
+		})
+		return
+	}
 	ctx.JsonSuccess("ok")
 }

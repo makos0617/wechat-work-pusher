@@ -1,10 +1,15 @@
 module wechat-work-pusher
 
-go 1.15
+go 1.25.3
 
 require (
-	github.com/mizuki1412/go-core-kit v0.0.0-20210214072604-702224ffca5b
-	github.com/spf13/cast v1.3.1
-	github.com/spf13/cobra v1.1.3
-	github.com/tidwall/gjson v1.6.7
+	github.com/spf13/cobra v1.10.1
+	github.com/tidwall/gjson v1.18.0
+)
+
+require (
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/spf13/pflag v1.0.9 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.0 // indirect
 )

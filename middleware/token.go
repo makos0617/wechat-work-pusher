@@ -1,31 +1,36 @@
 package middleware
 
 import (
-	"github.com/mizuki1412/go-core-kit/class"
-	"github.com/mizuki1412/go-core-kit/service/configkit"
-	"github.com/mizuki1412/go-core-kit/service/restkit/context"
-	"github.com/mizuki1412/go-core-kit/service/restkit/router"
+	"strings"
 	"wechat-work-pusher/constant"
+	"wechat-work-pusher/pkg/config"
+	"wechat-work-pusher/pkg/httpserver"
 )
 
 var token string
 
-func AuthToken() router.Handler {
+func AuthToken() httpserver.Middleware {
 	if token == "" {
-		token = configkit.GetStringD(constant.ConfigKeyToken)
+		token = config.GetString(constant.ConfigKeyToken)
 	}
-	return func(ctx *context.Context) {
-		getToken := ctx.Session().ID()
-		if getToken != token {
-			ctx.Json(context.RestRet{
-				Result: context.ResultAuthErr,
-				Message: class.String{
-					String: "token验证失败",
+	return httpserver.AuthMiddleware(func(ctx *httpserver.Context) bool {
+		// 从 Authorization: Bearer <token> 读取鉴权令牌
+		authHeader := ctx.Request.Header.Get("Authorization")
+		var getToken string
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			getToken = strings.TrimSpace(authHeader[len("Bearer "):])
+		}
+		if getToken == "" || getToken != token {
+			ctx.Json(httpserver.RestRet{
+				Result: httpserver.ResultAuthErr,
+				Message: httpserver.String{
+					String: "鉴权失败，缺少或非法Authorization",
 					Valid:  true,
 				},
 			})
-			ctx.Proxy.StopExecution()
+			ctx.StopExecution()
+			return false
 		}
-		ctx.Proxy.Next()
-	}
+		return true
+	})
 }

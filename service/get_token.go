@@ -1,16 +1,16 @@
 package service
 
 import (
+	"errors"
 	"fmt"
-	"github.com/mizuki1412/go-core-kit/class/exception"
-	"github.com/mizuki1412/go-core-kit/library/httpkit"
-	"github.com/mizuki1412/go-core-kit/service/configkit"
-	"github.com/spf13/cast"
-	"github.com/tidwall/gjson"
 	"net/http"
 	"sync"
 	"time"
 	"wechat-work-pusher/constant"
+	"wechat-work-pusher/pkg/config"
+	"wechat-work-pusher/pkg/httpclient"
+
+	"github.com/tidwall/gjson"
 )
 
 type getToken struct {
@@ -28,6 +28,11 @@ type respToken struct {
 var getTokenParams getToken
 var respTokenParams respToken
 
+// 并发刷新合并控制
+var refreshMu sync.Mutex
+var refreshing bool
+var refreshCond *sync.Cond
+
 func (th *respToken) set(val string) {
 	th.lock.Lock()
 	defer th.lock.Unlock()
@@ -36,31 +41,86 @@ func (th *respToken) set(val string) {
 }
 
 func (th *respToken) isValid() bool {
-	if !th.expire.IsZero() && time.Now().Before(th.expire) {
-		return true
-	}
-	return false
+	th.lock.RLock()
+	defer th.lock.RUnlock()
+	return !th.expire.IsZero() && time.Now().Before(th.expire) && th.val != ""
 }
 
-func GetTokenFromWechat() string {
+func (th *respToken) get() string {
+	th.lock.RLock()
+	defer th.lock.RUnlock()
+	return th.val
+}
+
+// 带有限重试的获取企业微信token，并发刷新合并
+func GetTokenFromWechat() (string, error) {
 	if respTokenParams.isValid() {
-		return respTokenParams.val
+		return respTokenParams.get(), nil
 	}
 	getTokenParams.once.Do(func() {
-		getTokenParams.cropId = configkit.GetStringD(constant.ConfigKeyWorkCorpId)
-		getTokenParams.secret = configkit.GetStringD(constant.ConfigKeyWorkCorpSecret)
+		getTokenParams.cropId = config.GetString(constant.ConfigKeyWorkCorpId)
+		getTokenParams.secret = config.GetString(constant.ConfigKeyWorkCorpSecret)
 	})
-	resp, code := httpkit.Request(httpkit.Req{
-		Method: http.MethodGet,
-		Url:    fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=%s&corpsecret=%s", getTokenParams.cropId, getTokenParams.secret),
-	})
-	if code != http.StatusOK {
-		panic(exception.New(fmt.Sprintf("get wechat token req err,code:%s", cast.ToString(code))))
+	refreshMu.Lock()
+	if refreshCond == nil {
+		refreshCond = sync.NewCond(&refreshMu)
 	}
-	if err := gjson.Get(resp, "errcode").Int(); err != 0 {
-		panic(exception.New(fmt.Sprintf("get wechat token resp error,code:%s", cast.ToString(err))))
+	if refreshing {
+		// 等待其他协程刷新完成
+		for refreshing {
+			refreshCond.Wait()
+		}
+		val := respTokenParams.get()
+		refreshMu.Unlock()
+		if val == "" {
+			return "", errors.New("token refresh failed")
+		}
+		return val, nil
 	}
-	token := gjson.Get(resp, "access_token").String()
-	respTokenParams.set(token)
-	return token
+	// 当前协程负责刷新
+	refreshing = true
+	refreshMu.Unlock()
+
+	var lastErr error
+	// 简单退避重试：3次，200ms, 400ms, 800ms
+	for attempt := 0; attempt < 3; attempt++ {
+		resp := httpclient.DoRequest(httpclient.Request{
+			Method: http.MethodGet,
+			URL:    fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=%s&corpsecret=%s", getTokenParams.cropId, getTokenParams.secret),
+		})
+		code := resp.StatusCode
+		if resp.Error != nil {
+			lastErr = resp.Error
+		} else if code == http.StatusOK {
+			if gjson.Get(resp.Body, "errcode").Int() == 0 {
+				token := gjson.Get(resp.Body, "access_token").String()
+				if token != "" {
+					respTokenParams.set(token)
+					lastErr = nil
+					break
+				} else {
+					lastErr = errors.New("empty access_token")
+				}
+			} else {
+				ec := gjson.Get(resp.Body, "errcode").Int()
+				lastErr = fmt.Errorf("wechat errcode:%d", ec)
+			}
+		} else {
+			lastErr = fmt.Errorf("http code:%d", code)
+		}
+		time.Sleep(time.Duration(200*(1<<attempt)) * time.Millisecond)
+	}
+
+	refreshMu.Lock()
+	refreshing = false
+	refreshCond.Broadcast()
+	val := respTokenParams.get()
+	refreshMu.Unlock()
+	if val == "" {
+		if lastErr == nil {
+			lastErr = errors.New("token refresh unknown error")
+		}
+		return "", lastErr
+	}
+	return val, nil
 }

@@ -20,57 +20,79 @@
 
 3、填写token
 
+> 说明：服务端路由基路径由 `rest.base` 控制，默认是 `wechat-work-pusher`，因此接口为：
+> `POST /wechat-work-pusher/msg` 与 `POST /wechat-work-pusher/card`
+
 #### Docker部署
 
     docker run -d -v /home/config.json:/root/config.json -p 9000:9000 --restart=always --name wechat-work-pusher myleo1/wechat-work-pusher
 
-> 注意：替换/home/config.json 为config.json路径
+> 注意：替换/home/config.json 为config.json路径；也可通过环境变量 `CONFIG_PATH` 指定配置文件路径。
 
 ## 使用方法
 
 以Go为例，其他语言类似
 
-#### 文本消息
+#### 文本消息（原生 net/http 示例）
 
 ```go
-func Push2Wechat(to, msg string) {
-   httpkit.Request(httpkit.Req{
-      Method: http.MethodPost,
-      //将127.0.0.1替换成自己的ip
-      Url:    http://127.0.0.1:9000/wechat-work-pusher/msg,
-      Header: map[string]string{
-         "Cookie": fmt.Sprintf("session=%s", config中填写的token),
-      },
-      FormData: map[string]string{
-         "to":      to,
-         "content": msg,
-      },
-   })
+import (
+    "fmt"
+    "net/http"
+    "net/url"
+    "strings"
+)
+
+func Push2Wechat(to, msg string) error {
+    form := url.Values{}
+    form.Set("to", to)
+    form.Set("content", msg)
+
+    req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:9000/wechat-work-pusher/msg", strings.NewReader(form.Encode()))
+    if err != nil { return err }
+    req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+    req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", 配置中的token))
+
+    resp, err := http.DefaultClient.Do(req)
+    if err != nil { return err }
+    defer resp.Body.Close()
+    if resp.StatusCode != http.StatusOK { return fmt.Errorf("http status: %d", resp.StatusCode) }
+    return nil
 }
 ```
 
-#### 卡片消息
+#### 卡片消息（原生 net/http 示例）
 
 卡片消息参数具体请参考：https://work.weixin.qq.com/api/doc/90000/90135/90236#%E6%96%87%E6%9C%AC%E5%8D%A1%E7%89%87%E6%B6%88%E6%81%AF
 
 ```go
-func Push2WechatCard(to, msg string) {
-   httpkit.Request(httpkit.Req{
-      Method: http.MethodPost,
-      //将127.0.0.1替换成自己的ip
-      Url:    http://127.0.0.1:9000/wechat-work-pusher/card,
-      Header: map[string]string{
-         "Cookie": fmt.Sprintf("session=%s", config中填写的token),
-      },
-      FormData: map[string]string{
-         "to":      to,
-         "title":		title
-	 "description": fmt.Sprintf("<div class=\"gray\">%s\n</div> <div class=\"normal\">恭喜您%s~,学号[%s]打卡成功！\n</div><div class=\"highlight\">点击卡片进入云战役打卡官网查看详情~</div>", time.Now().Format(timekit.TimeLayoutYMD), name, id),
-         "url": "https://www.google.com",
-      },
-   })
+import (
+    "fmt"
+    "net/http"
+    "net/url"
+    "strings"
+)
+
+func Push2WechatCard(to, title, description, link string) error {
+    form := url.Values{}
+    form.Set("to", to)
+    form.Set("title", title)
+    form.Set("description", description)
+    form.Set("url", link)
+
+    req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:9000/wechat-work-pusher/card", strings.NewReader(form.Encode()))
+    if err != nil { return err }
+    req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+    req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", 配置中的token))
+
+    resp, err := http.DefaultClient.Do(req)
+    if err != nil { return err }
+    defer resp.Body.Close()
+    if resp.StatusCode != http.StatusOK { return fmt.Errorf("http status: %d", resp.StatusCode) }
+    return nil
 }
 ```
+
 ## 效果演示
 
 ![image](https://user-images.githubusercontent.com/66349676/111748431-7eadf380-88cb-11eb-8590-73e1414d98e6.png)
